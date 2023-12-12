@@ -1,11 +1,21 @@
 {
 	"name": "Salesforce Translation Cleaner",
-	"author": "Kenji776",
+	"author": "Daniel Llewellyn",
 	"version": 1.0,
 	"sourceDir": "input",
 	"destDir": "output",
+	"sourceFilesType": ".stf",
 	"orgDataLocation": "force-app\\main\\default",
+	"translationLogsLocation": "translationLogs",
+	"errorLogLocation": "salesforceErrorLogs",
+	"forceIncludeTypesWithMissingCheck": true,
 	"removedTranslationsOutputFolder": "removedTranslations",
+	"removeSecondCol":false,
+	"abortOnUntranslated":true,
+	"chunksInputFolder": "output",
+	"chunksOutputFolder": "translationChunks",
+	"breakChunksOnSubTypes": false,
+	"pauseOnError":false,
 	"translationTypes": {
 		"ButtonOrLink": "",
 		"CustomApp": "",
@@ -34,5 +44,45 @@
 		"ManagedContentType": "",
 		"ManagedContentNodeType": "",
 		"PathAssistantStepInfo": ""
-	}
+	},
+	"importTypes" : {
+		//These types will be added to the metadata import file.
+		"metadata" : [
+			"Action",
+			"AddressCountry",
+			"AddressState",
+			"ApexSharingReason",
+			"CustomApp",
+			"CustomField",
+			"CustomLabel",
+			"ButtonOrLink",
+			"Chatter Extension",
+			"CustomReportType",
+			"CustomField",
+			"DataCategory",
+			"DataCategory Group",
+			"FieldSet",
+			"QuickAction",
+			"Flow",
+			"LayoutSection",
+			"LookupFilter",
+			"ManagedContentNodeType",
+			"ManagedContentType",
+			"PicklistValue",
+			"RecordType",
+			"ReputationLevel",
+			"SControl",
+			"SolutionCategory",
+			"Stamp",
+			"StandardFieldHelp",
+			"Validation Error Message",
+			"WebTab",
+			"WorkflowTask",
+			"ValidationFormula"
+		]
+	},
+	//elements to forcefully exclude because the existing checks are not robust enough to detect these as invalid elements.
+	"forceExclude" : [
+		
+	]
 }
