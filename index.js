@@ -84,17 +84,29 @@ async function init() {
     config = { ...config, ...loadedConfig };	
 	
 	
-	
+	let paths = [config.orgDataLocation, config.translationLogsLocation, config.errorLogLocation, config.removedTranslationsOutputFolder, config.chunksOutputFolder];
+	for(const thisPath of paths){
+		
+		makeFolder(thisPath);
+	}
 	//scrape any invalid translation entries we can from error logs so we don't include them in our generated files.
 	invalidEntries = await processErrorLogEntries(config.errorLogLocation);
 	
 	
 	//because we don't want to have to read the massive translation file for every read of a custom label we load it into memory
-	customLabelsData = readFile(`${config.orgDataLocation}\\labels\\CustomLabels.labels-meta.xml`);
+	try{
+		customLabelsData = readFile(`${config.orgDataLocation}\\labels\\CustomLabels.labels-meta.xml`);
+	}catch(ex){
+		log('Custom labels could not be loaded. Please ensure the CustomLabels.labels-meta.xml file exists in the labels directory in your project folder.',true,'red');
+	}
 	
 	//because we don't want to have to read the massive translation file for every read of a custom label we load it into memory
-	addressData = loadAddressData();
 	
+	try{
+		addressData = loadAddressData();
+	}catch(ex){
+		log('Address data could not be loaded. Please ensure the Address.settings-meta.xml file exists in the settings directory in your project folder.',true,'red');
+	}
 	let processingResult = await processTranslations(config.sourceDir, config.destDir, config.sourceFilesType);
 	
 	log('All process translations finished. Promises resolved',true,'green');
@@ -332,13 +344,14 @@ async function cleanStfFile(sourceDir, file, destDir){
 						}
 					});
 					*/
+					
 					if(config.forceExclude.includes(keys[0])){
 						log('Excluding ' + keys[0] + ' due to forceful exclusion rule entry in config', true, 'yellow');
 					}else if(invalidEntries.includes(keys[0])){
 						log('Excluding ' + keys[0] + ' due to automatic detection of being invalid from error logs.', true, 'yellow');
 					}else{
-						//lineValid = doesLocalMetadataExist(metadataType,objectName,elementName,metadataParts);
-						lineValid = true;
+						lineValid = doesLocalMetadataExist(metadataType,objectName,elementName,metadataParts);
+						//lineValid = true;
 					}
 					
 				
@@ -987,6 +1000,13 @@ function writeTranslationFile(destFolder, fileName, lines=[]){
 function clearScreen(){
 	console.log('\033[2J');
 	process.stdout.write('\033c');
+}
+
+function makeFolder(dir){
+	if (!fs.existsSync(dir)){
+		console.log('Making folder: ' + dir);
+		fs.mkdirSync(dir, { recursive: true });
+	}
 }
 
 /**

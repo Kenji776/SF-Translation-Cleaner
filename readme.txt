@@ -19,13 +19,13 @@ The approach is fairly simple.
 
 2) Modify the config.json file as needed (if needed). In most cases there shouldn't be any need to change this, except MAYBE the orgDataLocation (personally I copy the project folder into this script folder when running it just to keep my main project folder clean). 
 
-3) Use the Salesforce translation workbench to export all the bilingual translation files from your source org. Download each .stf file (or .xlf files. My orgs refused to export these but theoretically would work better). Once downloaded put them into whatever folder is designated as your 'sourceDir' in your config.json file.
+3) Use the Salesforce translation workbench to export all the bilingual translation files from your source org. Download each .stf file (or .xlf files. My orgs refused to export these but theoretically would work better). Once downloaded put them into whatever folder is designated as your 'sourceDir' in your config.json file. This will be kind of a pain as the export will generate a document and a link to it for each language (if they are too large to batch together). So you'll have to just download them one by one. Note to self, write a mass downloader JS script....
 
-4) Run the script (either using the included batch file if on windows or just use the console command 'node index.js' no quotes). If everything was found and is processing correctly it should generate a large amount of output in most cases. If there are errors check your file paths and make sure all referenced folders in the config.json exist. 
+4) Run the script (either using the included translationCleaner.bat batch file if on windows or just use the console command 'node index.js' no quotes). If everything was found and is processing correctly it should generate a large amount of output in most cases. If there are errors check your file paths and make sure all referenced folders in the config.json exist. Depending how many languages you are processing, how many translations there are and the speed of your machine this can take a bit. Probably not more than 5-10 minutes.
 
-5) Zip all of the files generated in the 'output' directory. Use the translation workbench to import it. If errors occur you can download the error logs and place them into the errorLogLocation folder specified in your config.json. Any logs there will be processed and any 'invalid key' translation elements will automatically be skipped on the next generation run. These are elements that for some reason or another don't exist in your org but the script was unable to detect that. If your translation file loaded with no issues then you don't need to worry about this step.
+5) Zip all of the files generated in the 'output' directory. Use the translation workbench to import it. If errors occur you can download the error logs and place them into the errorLogLocation folder specified in your config.json. Any logs there will be processed and any 'invalid key' translation elements will automatically be skipped on the next generation run. These are elements that for some reason or another don't exist in your org but the script was unable to detect that (such as with nested flow steps). If your translation file loaded with no issues then you don't need to worry about this step.
 
-If you encounter errors other than 'invalid key' you'll have to do some more investigation. The notes.txt file contains a bit of debugging information.
+If you encounter errors other than 'invalid key' you'll have to do some more investigation. The notes.txt file contains a bit of debugging information. Errors about 'the key's translation type must have the file's translation type' are also generally invalid translations as well and can be removed.
 
 
 
@@ -43,11 +43,11 @@ addressData.json: A JSON dump of the constructed object created by processing th
 
 invalidTranslationEntries.json:  a JSON dump of all the elements collected from the error logs in the errorLogLocation folder. These elements will be excluded from the translation outputs as they were found in a previous run to cause failures. 
 
-output->metadata_[input file name].stf: Results of script run/cleaning. Importable stf files that can be uploaded to Salesforce.
+output/metadata_[input file name].stf: Results of script run/cleaning. Importable stf files that can be uploaded to Salesforce.
 
-output->metadata_[input file name].stf.log: A log of the results of processing the stf file. Informational only.
+translationLogs/[input file name].stf.log: A log of the results of processing the stf file. Informational only.
 
-removedTranslations->[input file name].stf: A log of all translations that were found to be invalid for the given file.
+removedTranslations/[input file name].stf: A log of all translations that were found to be invalid for the given file.
 
 log.txt: An log of all the operations that happened during the last script execution run.
 
