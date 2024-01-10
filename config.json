@@ -1,50 +1,93 @@
+//translation cleaner config JSON file. Remember to use \\ instead of \ in all file paths!
 {
 	"name": "Salesforce Translation Cleaner",
 	"author": "Daniel Llewellyn",
 	"version": 1.0,
+	
+	//where should the translation (.stf) files be read from? (In relation to this scripts location)
 	"sourceDir": "input",
+	
+	//where should the results of the cleaning operation be saved?
 	"destDir": "output",
+	
+	//are we loading .stf or .xlf files (.xlf not fully supported yet)
 	"sourceFilesType": ".stf",
-	"orgDataLocation": "force-app\\main\\default",
+	
+	//where is the location of the fully downloaded local org metadata? This may be a sub folder in this script or your actual project folder. No changes on source files are performed.
+	"orgDataLocation": "C:\\YourSalesforceProjectFolderPath\\force-app\\main\\default",
+	
+	//where to write out the logs of each processed language
 	"translationLogsLocation": "translationLogs",
+	
+	//where to read the Salesforce provided error logs that are emailed during import jobs. These logs will be scraped to find and automatically exclude invalid elements on the next run.
 	"errorLogLocation": "salesforceErrorLogs",
+	
+	//where should the JSON converted flow definitons be stored? These are used to try and detect missing or invalid elements within flows (experimental)
+	"flowJsonLocation": "flowJSON",
+	
+	//for translated elements that I do not know how to check the validity of through validating existance of related metadata on the file system (ManagedContentType, ManagedContentNodeType, PathAssistantStepInfo)
+	//should they just be forcefully included with no validation? 
 	"forceIncludeTypesWithMissingCheck": true,
+	
+	//where to write the logs of translations that were stripped during cleaning.
 	"removedTranslationsOutputFolder": "removedTranslations",
-	"removeSecondCol":false,
+
+	//should the translation cleaner stop cleaning a file once it encounters the line in the .stf file that indicates all lines following are unstranslated? Probably leave as true.
 	"abortOnUntranslated":true,
+	
+	//should the script automatically zip the resulting ouptut of the cleaning process using 7zip?
+	"autoZip": true,
+	
+	//when running translation chunker (breaks one languages import file into smaller files group by translation element type) where should those chunk files be read from? For ease of use set to the output folder (destDir) of the cleaner.
 	"chunksInputFolder": "output",
+	
+	//where should the resulting chunker chunk files be written to?
 	"chunksOutputFolder": "translationChunks",
+	
+	//should the chunker break not only on major type (metadata type, such as customlabel, customfield, picklistvalue, etc) but each sub type? (not recommended. Generates thousands and thousands of files in large loads)
 	"breakChunksOnSubTypes": false,
+	
+	//maximum number of translation lines per chunk file until a new one is created.
+	"linesPerChunk":500,
+	
+	//pauses the script on caught errors
 	"pauseOnError":false,
+	
+	//use the experimental flow checker logic
+	"checkFlowJSON":true,
+	
+	//types of translations to check for.
 	"translationTypes": {
-		"ButtonOrLink": "",
-		"CustomApp": "",
-		"CustomField": "",
-		"LayoutSection": "",
-		"LookupFilter": "",
-		"PicklistValue": "",
-		"RecordType": "",
-		"ValidationFormula": "",
-		"WebTab": "",
-		"CustomLabel": "",
-		"ApexSharingReason": "",
-		"CustomReportType": "",
-		"CrtLayoutSection": "",
-		"CrtColumn": "",
-		"DataCategory": "",
-		"DataCategoryGroup": "",
-		"Scontrol": "",
-		"StandardFieldHelp": "",
-		"WorkflowTask": "",
-		"AddressCountry": "",
-		"AddressState": "",
-		"Flow": "",
-		"FieldSet": "",
-		"QuickAction": "",
-		"ManagedContentType": "",
-		"ManagedContentNodeType": "",
-		"PathAssistantStepInfo": ""
+		"ButtonOrLink": true,
+		"CustomApp": true,
+		"CustomField": true,
+		"LayoutSection": true,
+		"LookupFilter": true,
+		"PicklistValue": true,
+		"RecordType": true,
+		"ValidationFormula": true,
+		"WebTab": true,
+		"CustomLabel": true,
+		"ApexSharingReason": true,
+		"CustomReportType": true,
+		"CrtLayoutSection": true,
+		"CrtColumn": true,
+		"DataCategory": true,
+		"DataCategoryGroup": true,
+		"Scontrol": true,
+		"StandardFieldHelp": true,
+		"WorkflowTask": true,
+		"AddressCountry": true,
+		"AddressState": true,
+		"Flow": true,
+		"FieldSet": true,
+		"QuickAction": true,
+		"ManagedContentType": true,
+		"ManagedContentNodeType": true,
+		"PathAssistantStepInfo": true
 	},
+	
+	//list of all translation types that will be flagged as a 'metadta' import. Anything in the translationTypes list that does not appear in this list would be considered data. In most cases the two lists should match.
 	"importTypes" : {
 		//These types will be added to the metadata import file.
 		"metadata" : [
@@ -81,8 +124,9 @@
 			"ValidationFormula"
 		]
 	},
-	//elements to forcefully exclude because the existing checks are not robust enough to detect these as invalid elements.
+	//elements to forcefully exclude because the existing checks are not robust enough to detect these as invalid elements. Include complete element definition, ex: "CustomField.SomeObject__c.SomeField__c.FieldLabel"
 	"forceExclude" : [
+
 		
 	]
 }

@@ -10,6 +10,7 @@ const configFileName = "config.json";
 const fs = require("fs");
 const path = require("path");
 const readline = require('readline');
+const spawn = require("child_process");
 var metadataTypes = [];
 var xml2js = require('xml2js');
 var parseString = xml2js.parseString;
@@ -76,7 +77,7 @@ async function init() {
     let d = new Date();
     d.toLocaleString();
 
-    log("Started process at " + d, false);
+    log("Started process at" + d, false);
 	
 	log('Starting cleaning of translation files',true,'green');
     //load the configuration from the JSON file.
@@ -84,35 +85,30 @@ async function init() {
     config = { ...config, ...loadedConfig };	
 	
 	
-	let paths = [config.orgDataLocation, config.translationLogsLocation, config.errorLogLocation, config.removedTranslationsOutputFolder, config.chunksOutputFolder];
-	for(const thisPath of paths){
-		
-		makeFolder(thisPath);
-	}
 	//scrape any invalid translation entries we can from error logs so we don't include them in our generated files.
 	invalidEntries = await processErrorLogEntries(config.errorLogLocation);
 	
-	
 	//because we don't want to have to read the massive translation file for every read of a custom label we load it into memory
-	try{
-		customLabelsData = readFile(`${config.orgDataLocation}\\labels\\CustomLabels.labels-meta.xml`);
-	}catch(ex){
-		log('Custom labels could not be loaded. Please ensure the CustomLabels.labels-meta.xml file exists in the labels directory in your project folder.',true,'red');
-	}
+	customLabelsData = readFile(`${config.orgDataLocation}\\labels\\CustomLabels.labels-meta.xml`);
 	
-	//because we don't want to have to read the massive translation file for every read of a custom label we load it into memory
+	//structure the address data into a JSON object so that way we can easily check for countries/states and discard ones that don't exist.
+	addressData = await loadAddressData();
 	
-	try{
-		addressData = loadAddressData();
-	}catch(ex){
-		log('Address data could not be loaded. Please ensure the Address.settings-meta.xml file exists in the settings directory in your project folder.',true,'red');
-	}
 	let processingResult = await processTranslations(config.sourceDir, config.destDir, config.sourceFilesType);
 	
-	log('All process translations finished. Promises resolved',true,'green');
-		
-	await generateFinalReport();
+	log('----------------------------  Final Result-----------------------',true,'green');
+	log(JSON.stringify(processingResult, null, 2));
 	
+	//generate the spreadsheet with the totals	
+	await generateFinalReport();
+		
+	if(config.autoZip){
+		let filename = `Translations Compressed ${d.toISOString().replace(/T/, ' ').replace(/\..+/, '').replaceAll(':','-')}`;
+		await zipResults(filename, config.destDir);
+	}
+	
+	log('All process translations finished. Please import your result file ',true,'green');
+
 	finish();
 	
 	
@@ -128,7 +124,6 @@ async function init() {
 */
 async function processTranslations(sourceDir='input', destDir='output', fileType='.stf') {
 	log(`Reading ${fileType} files from ${sourceDir}`,true);
-	
 	let promises = [];
 	
 	try {
@@ -150,11 +145,14 @@ async function processTranslations(sourceDir='input', destDir='output', fileType
             const stat = await fs.promises.stat( sourcePath );
 
             if( stat.isFile() ){
-				if(fileType == '.stf') promises.push( cleanStfFile(sourceDir, file, destDir) );
+				if(fileType == '.stf') {
+					promises.push( cleanStfFile(sourceDir, file, destDir) );
+				}
+				
 				else if(fileType == '.xlf') promises.push( cleanXlfFile(sourceDir, file, destDir) );
 			}
             else if( stat.isDirectory() ){
-                log( sourcePath + ' is a directory. skipping. ' );
+                //log( sourcePath + ' is a directory. skipping. ' );
 			}
         }
 		
@@ -174,6 +172,8 @@ async function processTranslations(sourceDir='input', destDir='output', fileType
 * @param {string} sourceDir the local directory where the translation file is located
 * @param {string} file the name of the translation file to read. Should be a .stf file.
 * @param {destDir} the destination directory to write the cleaned file to.
+
+* @note This function is not complete, hasn't been tested and probably won't work. This is only a rough outline of what would be needed to parse and clean Xlf files.
 */
 async function cleanXlfFile(sourceDir, file, destDir){
 	const filePath = path.join( sourceDir, file );
@@ -198,7 +198,7 @@ async function cleanXlfFile(sourceDir, file, destDir){
 	for (var i = root.length - 1; i >= 0; i--) {
 		let thisTranslation = new TranslationObject(root[i]);
 			
-		if (!doesLocalMetadataExist(thisTranslation.metadataType,thisTranslation.objectName,thisTranslation.elementName)) { 
+		if (!await doesLocalMetadataExist(thisTranslation.metadataType,thisTranslation.objectName,thisTranslation.elementName)) { 
 			root.splice(i, 1);
 		}
 	}
@@ -235,6 +235,10 @@ async function cleanStfFile(sourceDir, file, destDir){
 			language: '',
 			languageCode: ''
 			
+		},
+		ERROR: {
+			invalid: 0,
+			errors: []
 		}
 	};
 	const filePath = path.join( sourceDir, file );
@@ -255,8 +259,9 @@ async function cleanStfFile(sourceDir, file, destDir){
 	for await (const line of rl) {
 		let lineValid = false;
 		let lineVal = line;
+		let invalidObjects = [];
 		
-		//try{
+		try{
 			if(!startCleaning){			
 				let lineParts = line.split(' ');
 				if(line.trim().startsWith('# Language: ')){
@@ -297,23 +302,11 @@ async function cleanStfFile(sourceDir, file, destDir){
 				
 				//generally speaking (but not an absolute rule) the parts of the identifier are first the metadata type, second the object it pertains to, and finally the element (field usually) specifically on that object this translation is for
 				//some metadata types act differently so you'll see some checks using these variables in ways that are not immediatly intuitive based on their name
-				let metadataType = metadataParts[0];
-				let objectName = metadataParts[1];
-				let elementName = metadataParts[2];
-								
-						
-				//okay this is super annoying. For some reason in the translation file, custom metadata types get the suffix __c when really they should have the suffix __mdt. So if our object ends with __c, check to make sure
-				//an object folder actually exists for it. If not, test to see if one exists with __mdt instead and then overwrite the __c with __mdt instead. So for example the custom metadata 
-				//Service_Complaint_Analysis_Routing__mdt
-				//shows up in our translation file with an entry for a picklist value like this.
-				//CustomField.Service_Complaint_Analysis_Routing__c.Complaint_Reason.FieldLabel	Complaint Reason
-				//See how that __c is incorrect? We need to change that, but we have no way of knowing ahead of time that this a metadata because the very thing that would tell us that (having an __mdt as it's postfix) is incorrect. So we just test both.
-				
-				if(objectName && objectName.endsWith('__c') && fileExists(`${config.orgDataLocation}\\objects\\${objectName.replace('__c','__mdt')}`)){
-					objectName = objectName.replace('__c','__mdt');
-					log(`Object detected as custom metadata. Replacing __c with __mdt`);
-				}
-				
+				var metadataType = metadataParts[0];
+				var objectName = metadataParts[1];
+				var elementName = metadataParts[2];
+							
+
 				//create a running tally of all the metadata types and their member translations that we either carry over or discard
 				if(!totals.hasOwnProperty(metadataType)){
 					log('Adding metadata type: ' + metadataType);
@@ -321,12 +314,59 @@ async function cleanStfFile(sourceDir, file, destDir){
 					totals[metadataType] = {
 						total: 0,
 						valid: 0,
-						invalid: 0
+						invalid: 0,
+						errors: []
 					};
 					
-				};
+				};	
 				
-				if(config.translationTypes.hasOwnProperty(metadataType)){
+				//this if statment isn't 'smart' enough to keep for now. Ideally we'd know for sure that the metadata type is a reference to an object, but we don't know that for sure since
+				//there arn't really any hard and fast rules it seems to the format of the translation definitions. So in the future we could probably have a 'lookup' table that checks to see if a given
+				//translation type (customfield, picklist value, etc) can use this check or not but for now it's probably safest to skip this even though it will make processing time much longer.
+				
+				/*
+				//if we know this object type isn't valid, skip it.
+				if(invalidObjects.indexOf(objectName) > -1) {
+					totals[metadataType].invalid++;
+					badLines.push(lineVal);
+					continue;
+				}
+				*/
+				
+			
+				//okay this is super annoying. For some reason in the translation file, custom metadata types get the suffix __c when really they should have the suffix __mdt. So if our object ends with __c, check to make sure
+				//an object folder actually exists for it. If not, test to see if one exists with __mdt instead and then overwrite the __c with __mdt instead. So for example the custom metadata 
+				//Service_Complaint_Analysis_Routing__mdt
+				//shows up in our translation file with an entry for a picklist value like this.
+				//CustomField.Service_Complaint_Analysis_Routing__c.Complaint_Reason.FieldLabel	Complaint Reason
+				//See how that __c is incorrect? We need to change that, but we have no way of knowing ahead of time that this a metadata because the very thing that would tell us that (having an __mdt as it's postfix) is incorrect. So we just test both.
+				
+
+					
+				//skip this if we are dealing with a standard picklist field.
+				if(objectName.toLowerCase() !== 'standard' ){
+					let objectnameConverted = objectName.replace('__c','__mdt');
+					let originalFolderExists = fileExists(`${config.orgDataLocation}\\objects\\${objectName}`);
+					let convertedFolderExists = fileExists(`${config.orgDataLocation}\\objects\\${objectnameConverted}`);
+					
+					//related to the commented out if statment above, this check 
+					if(!originalFolderExists && !convertedFolderExists && !invalidObjects.indexOf(objectName) === -1){
+						log(`\n\n\n---------- Could not locate folder for object ${objectName} or potential metadata object of ${objectnameConverted} at location ${config.orgDataLocation}\\objects\\}\n\n\n`,true,'yellow');
+						totals[metadataType].invalid++;
+						badLines.push(lineVal);
+						invalidObjects.push(objectName);
+						continue;
+					}
+					else if(objectName && !originalFolderExists && !convertedFolderExists){
+						objectName = objectName.replace('__c','__mdt');
+						log(`Object ${objectName} detected as custom metadata (__mdt). Replacing __c with __mdt`,true,'yellow');
+					}
+				}
+				
+
+
+				
+				if(config.translationTypes.hasOwnProperty(metadataType) && config.translationTypes[metadataType] == true){
 					log('Evaluating Existance of ' + objectName + '.' + elementName);
 					totals[metadataType].total++;
 					let lineValid = false;
@@ -350,21 +390,11 @@ async function cleanStfFile(sourceDir, file, destDir){
 					}else if(invalidEntries.includes(keys[0])){
 						log('Excluding ' + keys[0] + ' due to automatic detection of being invalid from error logs.', true, 'yellow');
 					}else{
-						lineValid = doesLocalMetadataExist(metadataType,objectName,elementName,metadataParts);
-						//lineValid = true;
+						lineValid = await doesLocalMetadataExist(metadataType,objectName,elementName,metadataParts);
 					}
-					
-				
-					
 					
 					if(lineValid){
 						
-						//this was an experimental feature to see if remove the non translated column would help with import errors referring to 'wrong number of columns'. It didn't work (import files can have all 4 cols)
-						//but this code is kept just in case we want to do other column removals in the future.
-						if(config.removeSecondCol){
-							let lineParts = line.split('\t');
-							lineVal = lineParts[0]+'\t'+lineParts[2];
-						}
 						totals[metadataType].valid++;
 	
 						//The import process differentiates between data and metadata. I was getting errors for a while about having the two mixed so I wrote this 'filter' logic to have two different import files be generated
@@ -379,17 +409,22 @@ async function cleanStfFile(sourceDir, file, destDir){
 						totals[metadataType].invalid++;
 						badLines.push(lineVal);
 					}	
-
-					//i'd prefer these to be functions of the totals object, but since I'm just outputting it to the consol and functions doesn't get resolved during serializating we just do this instead.
-					totals[metadataType].validPercent = totals[metadataType].total != 0 ? Math.round((totals[metadataType].valid/totals[metadataType].total)*100) : 0	
-					totals[metadataType].invalidPercent = totals[metadataType].total != 0 ? Math.round((totals[metadataType].invalid/totals[metadataType].total)*100) : 0					
+				
+				}else{
+					log(`No translation type specified in config.json for metadata type ${metadataType}. Valid types are ${config.translationTypes}`,true,'red');
+					totals[metadataType].invalid++;
+					badLines.push(lineVal);
+					console.log(config.translationTypes);
 				}
 			}
-		/*
+		
 		}catch(ex){
 			log("Erroring processing translation line in file. " + ex.message, true, "red");
+			totals[metadataType ? metadataType : 'ERROR'].total++;
+			totals[metadataType ? metadataType : 'ERROR'].errors.push("Erroring processing translation line in file. " + ex.message);
+			badLines.push(lineVal);
 			if(config.pauseOnError) await keypress();
-		}*/
+		}
 	}
 	totals.details.total = numTranslationLines;
 	totals.details.invalid = badLines.length;
@@ -435,9 +470,10 @@ async function cleanStfFile(sourceDir, file, destDir){
 * @param {string} elementName the field (in most cases) this translation is related to. The third part of the translation identifier. EX WorkflowTask.Case.Day_5_Follow_Up_Email_Sent_to_Employee.SubjectLabel => Day_5_Follow_Up_Email_Sent_to_Employee
 * @return {boolean} true - the corresponding metadata exists on the local filesystem. false - the corresponding metadata does not exist on the local filesystem.
 */
-function doesLocalMetadataExist(metadataType,objectName,elementName,metadataParts){
+async function doesLocalMetadataExist(metadataType='',objectName='',elementName='',metadataParts){
 	let lineValid = false;
 	try{
+		log(`Checking validity of ${metadataType}  ${objectName} ${elementName}`,true);
 		switch(metadataType) {
 			case 'ButtonOrLink':
 				//local path: \objects\Account\webLinks\Apttus__ViewAgreementHierarchyforAccount.webLink-meta.xml
@@ -455,7 +491,8 @@ function doesLocalMetadataExist(metadataType,objectName,elementName,metadataPart
 				break;
 				
 			case 'LayoutSection':
-				lineValid = fileExists(`${config.orgDataLocation}\\layouts\\${objectName}-${elementName}__c.layout-meta.xml`);
+			
+				lineValid = fileExists(`${config.orgDataLocation}\\layouts\\${objectName}-${elementName}.layout-meta.xml`);
 				break;
 				
 			case 'LookupFilter':
@@ -463,25 +500,48 @@ function doesLocalMetadataExist(metadataType,objectName,elementName,metadataPart
 				break;
 				
 			case 'PicklistValue':
-				//first check to make sure the field even exists before evaluating its picklist values
-				let fieldExists = fileExists(`${config.orgDataLocation}\\objects\\${objectName}\\fields\\${elementName}__c.field-meta.xml`);
+			
+				//TODO: Confirm that each individual picklist value actually exists (instead of just assuming it does) as non existing values will cause errors.
 				
-				if(!fieldExists) {
-					log(`Object or field ${objectName}.${elementName} do not exist. Skipping picklist value evaluation`);
+				//standard picklists
+				if(objectName.toLowerCase() == 'standard') {
+					//lineValid = fileExists(`${config.orgDataLocation}\\objects\\${objectName}`); //cannot use object type to confirm since the 'objectName' in this case is just 'standard'
+					//we need a mapping of every 'standard field name' to it's propert parent object/field name mapping. EX: PicklistValue.Standard.opportunityStage -> Opportunity.Stage
+					lineValid = true;
 					break;
 				}
 				
-				let picklistValue = encodeHtmlEntities(metadataParts[3]);
+				//global value set picklists, are they just inherently valid? (not sure how to validate these)
+				else if(elementName.slice(-5) === '__gsv'){
+					
+					lineValid = true;
+					
+					break;
+					
+				}
 				
-				log(`Looking for value ${picklistValue} in text of body`);
-				
-				let fieldData = getCachedData(metadataType,objectName,elementName);
-		
-				//TODO: This should probably be replace from just a test search into parseing the picklist XML into a JSON object like we do with the addressCountry/addressState data. We could then search for an element
-				//with matching fullname property and check to make sure it's active. That would be a little cleaner and allow us to check for the active flag which this text based search version does not.
-				if(fieldData && fieldData.indexOf(`<fullName>${picklistValue}</fullName>`) > -1) lineValid = true;
+				//all other picklists
+				else{
+					//first check to make sure the field even exists before evaluating its picklist values
+					let fieldExists = fileExists(`${config.orgDataLocation}\\objects\\${objectName}\\fields\\${elementName}__c.field-meta.xml`);
+					
+					if(!fieldExists) {
+						log(`Object or field ${objectName}.${elementName} do not exist. Skipping picklist value evaluation`);
+						break;
+					}
+					
+					let picklistValue = encodeHtmlEntities(metadataParts[3]);
+					
+					log(`Looking for value ${picklistValue} in text of body`);
+					
+					let fieldData = getCachedData(metadataType,objectName,elementName);
+			
+					//TODO: This should probably be replace from just a test search into parseing the picklist XML into a JSON object like we do with the addressCountry/addressState data. We could then search for an element
+					//with matching fullname property and check to make sure it's active. That would be a little cleaner and allow us to check for the active flag which this text based search version does not.
+					if(fieldData && fieldData.indexOf(`<fullName>${picklistValue}</fullName>`) > -1) lineValid = true;
 
-				break;
+					break;
+				}
 				
 			case 'RecordType':
 				lineValid = fileExists(`${config.orgDataLocation}\\objects\\${objectName}\\recordTypes\\${elementName}.recordType-meta.xml`);
@@ -569,7 +629,8 @@ function doesLocalMetadataExist(metadataType,objectName,elementName,metadataPart
 				break;
 				
 			case 'StandardFieldHelp':
-				lineValid = fileExists(`${config.orgDataLocation}\\objects\\${objectName}\\fields\\${elementName}__c.field-meta.xml`);
+				//since all objects have the same standard fields we can just check the the object itself exists (since it may not be enabled like 'accountContactRole' or some of the other optional feature objects).
+				lineValid = fileExists(`${config.orgDataLocation}\\objects\\${objectName}`); //\\fields\\${elementName}__c.field-meta.xml`);
 				break;
 				
 			case 'WorkflowTask':
@@ -585,15 +646,80 @@ function doesLocalMetadataExist(metadataType,objectName,elementName,metadataPart
 			case 'AddressCountry':
 				//local path: \settings\Address.settings-meta.xml
 				//rule def: AddressCountry.US	United States	Etats -Unis	-
+				console.log('Looking for address country: ' + objectName);
+				
 				if(addressData && addressData.hasOwnProperty(objectName)) lineValid = true;
 				break;
 				
 			case 'AddressState':
-				if(addressData && addressData?.[objectName]?.hasOwnProperty(elementName)) lineValid = true;
+				if(addressData && addressData?.[objectName]?.statesByCode?.hasOwnProperty(elementName)) lineValid = true;
 				break;
 				
 			case 'Flow':
-				lineValid = fileExists(`${config.orgDataLocation}\\flows\\${elementName}.flow-meta.xml`);
+				//Flow.Flow.New_OCSD_Order_Request.1.New_OCSD_Order_Request.Field.Status.FieldLabel	Status	Status	-
+				//Flow.Flow.New_OCSD_Order_Request.1.New_OCSD_Order_Request.AccountName.FieldInputParameter.label.FieldLabel	"Account Name"	Nombre de la cuenta	-
+				let flowExists = fileExists(`${config.orgDataLocation}\\flows\\${elementName}.flow-meta.xml`);
+
+				if(!flowExists) {
+					log(`Flow ${elementName} does not exist. Skipping translation`);
+					break;
+				}
+				
+				lineValid = true;
+				
+				console.log(metadataParts);
+				
+				//only worth additional checks if there is actual enough info to perform a check
+				if(metadataParts.length > 5){
+					let flowVersion = metadataParts[3];
+					let flowScreen = metadataParts[4];
+					let flowElementType = metadataParts[5];
+					let flowProperry = metadataParts[6]; 
+					
+					log(`Looking for value ${flowProperry} in text of body`);
+					
+					let flowData = getCachedData(metadataType,objectName,elementName);
+			
+					//Super weak check here, but it's better than nothing. Just check to see if the flow propety exists in the flow source file somewhere. We arn't doing any checking to make sure its in the right
+					//place or of the right type, just simply that the text from the property exists somewhere in the flow definition file.
+					
+					//maybe convert the xml content into JSON and check for the sub properties?
+					let JSONValid = true;
+					
+					if(config.checkFlowJSON){
+						console.log('\n\n\n------------------ Converting Flow to JSON');
+						let flowAsJson = await xmlToJson(flowData);
+						
+						fs.writeFileSync(`${config.flowJsonLocation}\\${elementName}.json`, JSON.stringify(flowAsJson, null, 2), function(err){
+							if(err) {
+								return log(err);
+							}							
+						});	
+
+						log(`Flow JSON Log file saved ${config.flowJsonLocation}\\${elementName}.json log saved` );
+						
+						console.log(flowAsJson);
+
+						//here we can start checking the structure of the flow's JSON to see if it has matching keys from the translation
+						/*
+						for(let screen of flowAsJson.Flow.screens){
+							console.log('Screen: ' + screen.name + ' VS ' + metadataParts[4]);
+							if(screen.name == metadataParts[4]) log('MATCH FOUND',true,'green');
+						}*/
+						if(!flowAsJson.Flow.screens.find(e => e.name == metadataParts[4])){
+							log(`Screen ${metadataParts[4]} does not exist in flow ${elementName}. Skipping translation`,true,'yellow');
+							JSONValid = false;
+						}	
+
+						else if(metadataParts[5] == 'field' && !flowAsJson.Flow.screens.fields.find(e => e.name == metadataParts[6])){
+							log(`Field ${metadataParts[6]} does not exist on screen ${metadataParts[4]} does not exist in flow ${elementName}. Skipping translation`,true,'yellow');
+							JSONValid = false;						
+						}
+						lineValid = JSONValid;						
+					}
+					
+				}
+				
 				break;
 				
 			case 'FieldSet':
@@ -635,6 +761,8 @@ function doesLocalMetadataExist(metadataType,objectName,elementName,metadataPart
 	return lineValid;
 }
 
+
+
 function encodeHtmlEntities(valueString){
 	valueString = valueString.replace(/[&<>'"]/g, 
 	tag => ({
@@ -674,13 +802,15 @@ async function processErrorLogEntries(sourceDir){
 		for(line of logEntries){
 			
 			//look to see if this is an invalid key line
-			if(line.indexOf('Invalid key: ') > -1) {
+			if(line.indexOf('Invalid key: ') > -1 || line.indexOf('Invalid key ') > -1) {
 				let cleanedLine = line;
 				//if so, trim the content around the offending element
 				cleanedLine = cleanedLine.replace('Invalid key: ','');
+				cleanedLine = cleanedLine.replace('Invalid key ','');
 				cleanedLine = cleanedLine.replace('[','');
 				cleanedLine = cleanedLine.replace(']','')
 				cleanedLine = cleanedLine.replace('. The key\'s translation type must match the file\'s translation type. ,','').trim();
+				cleanedLine = cleanedLine.replace(': Some keys are appended with their sort order for uniqueness. Re-export your file and ensure that the keys in both files match.,','').trim();
 				errorElements.push(cleanedLine);
 			}
 		}
@@ -796,24 +926,20 @@ async function generateFinalReport(sourceDir='translationLogs', fileType='.log')
             // Stat the file to see if we have a file or dir
             const stat = await fs.promises.stat( sourcePath );
 
-            if( stat.isFile() ){
-				if(fileType == '.stf') promises.push( cleanStfFile(sourceDir, file, destDir) );
+            if( stat.isFile()){		
+				let fileData = fs.readFileSync(`${sourceDir}\\${file}`, 'utf-8', function (err) {
+					log('Could not read error log file. Unable to process erroring elements' + err.message, true, "red");
+					return false;
+				});
 				
-					let fileData = fs.readFileSync(`${sourceDir}\\${file}`, 'utf-8', function (err) {
-						log('Could not read error log file. Unable to process erroring elements' + err.message, true, "red");
-						return false;
-					});
-					
-					logEntry = JSON.parse(fileData);
-					
-					
-					logs[logEntry.details.languageCode] = logEntry.details;
+				logEntry = JSON.parse(fileData);				
+				logs[logEntry.details.languageCode] = logs.hasOwnProperty(logEntry.details.languageCode) ? sumObjectsByKey(logs[logEntry.details.languageCode], logEntry.details) : logEntry.details;
 			}
         }
 		
 		let reportCsvContent = ['Language,LanguageCode,TotalEntries,ValidEntries,InvalidEntries,ValidPercent,InvalidPercent'];
 		for (let [key, l] of Object.entries(logs)) {
-			reportCsvContent.push(`${l.language},${l.languageCode},${l.total},${l.valid},${l.invalid},${l.validPercent},${l.invalidPercent}`);
+			reportCsvContent.push(`${l.language},${l.languageCode},${l.total},${l.valid},${l.invalid},${Math.round((l.valid/l.total)*100)},${Math.round((l.invalid/l.total)*100)}`);
 		}
 		
 		fs.writeFileSync('Translation Cleaning Final Report.csv', reportCsvContent.join('\r\n'), function(err){
@@ -836,6 +962,17 @@ async function generateFinalReport(sourceDir='translationLogs', fileType='.log')
 	return Promise.all(promises);
 }
 
+function sumObjectsByKey(...objs) {
+  return objs.reduce((a, b) => {
+    for (let k in b) {
+      if (b.hasOwnProperty(k) && typeof b[k] === 'number' )
+        a[k] = (a[k] || 0) + b[k];
+	  else
+		  a[k] = b[k];
+    }
+    return a;
+  }, {});
+}
 
 function wildcardStringSearch(wildcard, str) {
   let w = wildcard.replace(/[.+^${}()|[\]\\]/g, '\\$&'); // regexp escape 
@@ -850,6 +987,46 @@ function wildcardStringSearch(wildcard, str) {
 * @param {string} elementName the name of the field related to the objectName. Such as 'Status' for objectName 'Case'. Not required for WorkflowTask or DataCategory. 
 * @return {object} the data either fetched from or now stored in the cache for the requested type/object/field.
 */
+
+async function zipResults(fileName, outputFolder){ 
+
+	log(`Zipping folder ${outputFolder} to ${fileName}.zip`,true); 
+	let zipResults = runCommand(`7z a "${fileName}" ./${outputFolder}/* -r -tzip`);
+	
+	log(zipResults,true); 
+	
+	return true;
+}
+
+/**
+ * @Description Runs a shell command.
+ * @Param command the name of the command to execute WITHOUT any arguments.
+ * @Param arguments an array of arguments to pass to the command.
+ * @Return javascript promise object that contains the result of the command execution
+ */
+function runCommand(command, arguments = [], nolog) {
+	if(!nolog) log(command +  ' ' + arguments.join(' '));
+    let p = spawn(command, arguments, { shell: true, windowsVerbatimArguments: true });
+    return new Promise((resolveFunc) => {
+		var output ='';
+        p.stdout.on("data", (x) => {
+            //process.stdout.write(x.toString());
+            if(!nolog) log(x.toString());
+			output += x;
+        });
+        p.stderr.on("data", (x) => {
+			//process.stderr.write(x.toString());
+            if(!nolog) log(x.toString());
+			output += x;
+        });
+        p.on("exit", (code) => {
+			let returnObject = {'exit_code': code, 'output': output};
+			if(!nolog) log('Command complete. Result: ' + JSON.stringify(returnObject, null, 2),false);
+            resolveFunc(returnObject);
+        });
+    });
+}
+
 function getCachedData(type,objectName,elementName){
 	
 	console.log('Tryingto get cached data for ' + type + ' ' + objectName + ' ' + elementName);
@@ -878,6 +1055,9 @@ function getCachedData(type,objectName,elementName){
 			break;
 		case 'RecordType':
 			returnData = readFile(`${config.orgDataLocation}\\objects\\${objectName}\\recordTypes\\${elementName}.recordType-meta.xml`);
+			break;
+		case 'Flow':
+			returnData = readFile(`${config.orgDataLocation}\\flows\\${elementName}.flow-meta.xml`);
 			break;
 		default:
 			log('No method for getting stored data for type '+type+' defined. The metadata type cannot current be read/cached',true,'red');
@@ -973,7 +1153,7 @@ function readJSONFromFile(fileName) {
 
 
 async function xmlToJson(xml){
-	var parser = new xml2js.Parser(/* options */);
+	var parser = new xml2js.Parser();
 	return parser.parseStringPromise(xml);
 }
 
@@ -1000,13 +1180,6 @@ function writeTranslationFile(destFolder, fileName, lines=[]){
 function clearScreen(){
 	console.log('\033[2J');
 	process.stdout.write('\033c');
-}
-
-function makeFolder(dir){
-	if (!fs.existsSync(dir)){
-		console.log('Making folder: ' + dir);
-		fs.mkdirSync(dir, { recursive: true });
-	}
 }
 
 /**

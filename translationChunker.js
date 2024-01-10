@@ -162,6 +162,9 @@ async function chunkStfFile(sourceDir, file, destDir){
 	let startCleaning = false;
 
 	//check each line of our translation file to see if the related metadata exists locally.
+	let chunkIndex = 0;
+	let linesInChunk = 0;
+	let lastMetadata = '';
 	for await (const line of rl) {
 		let lineValid = false;
 		
@@ -184,6 +187,8 @@ async function chunkStfFile(sourceDir, file, destDir){
 				continue;
 			}
 			
+			
+			
 			if(startCleaning){				
 				//the line is tab delimited, so split on tabs to break it into its constituant chunks
 				const keys = line.split("\t");
@@ -200,16 +205,40 @@ async function chunkStfFile(sourceDir, file, destDir){
 
 				let chunkContainer = metadataType;
 				
-
+				//reset chunk index if metadata type is different
+				if(lastMetadata != metadataType){
+					chunkIndex = 0;
+				}
 				
+				//record this lines metadata type so we can compare it during the next iteration for the above if statment
+				lastMetadata = metadataType;
+				
+				//if breaking chunk files on sub type set the chunk id...
 				if(config.breakChunksOnSubTypes ){
 					chunkContainer = metadataType+'_'+objectName;
+				}
+				//if breaking chunk files per number of lines in chunk file set the chunk id...
+				else if(config.linesPerChunk && config.linesPerChunk > 0){
+					chunkContainer = metadataType+'_'+chunkIndex;			
 				}			
-
+						
+				//create empty container for chunk if it doesn't exist
 				if(!chunks.hasOwnProperty(chunkContainer)){
 					chunks[chunkContainer] = [];
-				}				
+				}
+				
+				//find out how many lines are in our current chunk.
+				linesInChunk = chunks[chunkContainer] ? chunks[chunkContainer].length : 0;
+				
+				//if we've hit the limit of lines in this chunk, increase index so next iteration it creates a new chunk file.
+				if(config.linesPerChunk && linesInChunk+1 == config.linesPerChunk){
+					
+					chunkIndex++;
+					console.log('Chunk index increased to: ' + chunkIndex);
+				}
+
 				chunks[chunkContainer].push(line);
+
 								
 			}
 

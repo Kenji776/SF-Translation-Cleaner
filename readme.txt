@@ -19,6 +19,8 @@ The approach is fairly simple.
 
 2) Modify the config.json file as needed (if needed). In most cases there shouldn't be any need to change this, except MAYBE the orgDataLocation (personally I copy the project folder into this script folder when running it just to keep my main project folder clean). 
 
+---- NOTE! USE DOUBLE BACKSLASHES FOR ALL FILE PATHS IN CONFIG! EX C:\myfolder\myfile.txt becomes C:\\myfolder\\myfile.txt
+
 3) Use the Salesforce translation workbench to export all the bilingual translation files from your source org. Download each .stf file (or .xlf files. My orgs refused to export these but theoretically would work better). Once downloaded put them into whatever folder is designated as your 'sourceDir' in your config.json file. This will be kind of a pain as the export will generate a document and a link to it for each language (if they are too large to batch together). So you'll have to just download them one by one. Note to self, write a mass downloader JS script....
 
 4) Run the script (either using the included translationCleaner.bat batch file if on windows or just use the console command 'node index.js' no quotes). If everything was found and is processing correctly it should generate a large amount of output in most cases. If there are errors check your file paths and make sure all referenced folders in the config.json exist. Depending how many languages you are processing, how many translations there are and the speed of your machine this can take a bit. Probably not more than 5-10 minutes.
@@ -33,7 +35,9 @@ If you encounter errors other than 'invalid key' you'll have to do some more inv
 
 To use this script you must have the following.
 - NodeJs installed
+- NPM (node package manager)
 - A local download of your org metadata (use the provided package.xml, you'll have to specify components that don't allow wildcard downloads)
+- 7zip (if autoZip is set to true in the config)
 
 --Output File Descriptions
 
